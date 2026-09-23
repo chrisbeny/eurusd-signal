@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b1220"><title>EUR/USD Structure — Stage 3</title>
+<style>
+body{margin:0;background:#0b1220;color:#eef2f7;font:16px system-ui,sans-serif}.wrap{max-width:760px;margin:auto;padding:16px}
+.card{background:#111c2f;border:1px solid #26364f;border-radius:18px;padding:16px;margin:12px 0}
+h1{font-size:22px;margin:0}.muted{color:#9aa8bd}.grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.box{background:#0d1728;border-radius:12px;padding:11px}.value{font-weight:700;margin-top:5px}
+.signal{text-align:center;font-size:31px;font-weight:800;padding:18px;border-radius:15px;background:#26364f;margin:14px 0}
+input,button{box-sizing:border-box;width:100%;padding:12px;border-radius:11px;border:1px solid #33445f;background:#0d1728;color:white;margin-top:8px}
+button{background:#2563eb;border:0;font-weight:700}.danger{background:#8b2635}.small{font-size:13px;color:#9aa8bd}
+.good{color:#7dd3fc}
+</style></head>
+<body><div class="wrap">
+<div class="card"><h1>EUR/USD — 1H Market Structure</h1><div class="muted">Stage 3 • live-feed connector</div>
+<div id="signal" class="signal">🟡 NO TRADE</div>
+<div class="grid">
+<div class="box">Live price<div id="price" class="value">—</div></div>
+<div class="box">Last candle<div id="time" class="value">—</div></div>
+<div class="box">Structure<div id="structure" class="value">—</div></div>
+<div class="box">Event<div id="event" class="value">—</div></div>
+<div class="box">Price action<div id="pa" class="value">—</div></div>
+<div class="box">Trend<div id="trend" class="value">—</div></div>
+<div class="box">Entry<div id="entry" class="value">—</div></div>
+<div class="box">Stop loss<div id="sl" class="value">—</div></div>
+<div class="box">Take profit<div id="tp" class="value">—</div></div>
+<div class="box">Risk / reward<div id="rr" class="value">—</div></div>
+</div></div>
+
+<div class="card">
+<b>Live data connection</b>
+<input id="apiKey" type="password" placeholder="Twelve Data API key">
+<button onclick="startLive()">Connect live EUR/USD</button>
+<button class="danger" onclick="stopLive()">Stop</button>
+<div id="status" class="small">Not connected.</div>
+</div>
+
+<div class="card small">
+<b>Stage 3 note:</b> The app polls a market-data API for EUR/USD 1-hour candles. The signal engine runs locally in the browser.
+For a production app, put the API key behind a server-side proxy rather than exposing it in the browser.
+Signals are analytical only and are not guaranteed to be profitable.
+</div>
+</div>
+
+<script>
+let timer=null, key='';
+const $=id=>document.getElementById(id);
+function setStatus(x){$('status').textContent=x}
+function fmt(x){return x==null?'—':Number(x).toFixed(5)}
+function ema(v,p){let e=v.slice(0,p).reduce((a,b)=>a+b,0)/p,k=2/(p+1);for(let i=p;i<v.length;i++)e=v[i]*k+e*(1-k);return e}
+function rsi(v,p=14){if(v.length<=p)return 50;let g=0,l=0;for(let i=1;i<=p;i++){let d=v[i]-v[i-1];g+=Math.max(d,0);l+=Math.max(-d,0)}g/=p;l/=p;for(let i=p+1;i<v.length;i++){let d=v[i]-v[i-1];g=(g*(p-1)+Math.max(d,0))/p;l=(l*(p-1)+Math.max(-d,0))/p}return l===0?100:100-100/(1+g/l)}
+function atr(c,p=14){let t=[];for(let i=1;i<c.length;i++)t.push(Math.max(c[i].high-c[i].low,Math.abs(c[i].high-c[i-1].close),Math.abs(c[i].low-c[i-1].close)));return t.slice(-p).reduce((a,b)=>a+b,0)/Math.min(p,t.length)}
+function analyze(c){
+  let n=c.length, highs=[],lows=[];
+  for(let i=2;i<n-2;i++){
+    if(c[i].high>c[i-1].high&&c[i].high>c[i-2].high&&c[i].high>c[i+1].high&&c[i].high>c[i+2].high)highs.push(c[i].high);
+    if(c[i].low<c[i-1].low&&c[i].low<c[i-2].low&&c[i].low<c[i+1].low&&c[i].low<c[i+2].low)lows.push(c[i].low);
+  }
+  const close=c[n-1].close, prev=c[n-2], last=c[n-1];
+  let bullishStructure=highs.length>=2&&lows.length>=2&&highs.at(-1)>highs.at(-2)&&lows.at(-1)>lows.at(-2);
+  let bearishStructure=highs.length>=2&&lows.length>=2&&highs.at(-1)<highs.at(-2)&&lows.at(-1)<lows.at(-2);
+  let bullBos=highs.length&&close>highs.at(-1), bearBos=lows.length&&close<lows.at(-1);
+  let body=Math.abs(last.close-last.open), range=Math.max(last.high-last.low,1e-9);
+  let bullEngulf=last.close>last.open&&last.open<=prev.close&&last.close>=prev.open;
+  let bearEngulf=last.close<last.open&&last.open>=prev.close&&last.close<=prev.open;
+  let bullReject=(Math.min(last.open,last.close)-last.low)>body*1.5&&last.close>last.open;
+  let bearReject=(last.high-Math.max(last.open,last.close))>body*1.5&&last.close<last.open;
+  let paBull=bullEngulf||bullReject, paBear=bearEngulf||bearReject;
+  let closes=c.map(x=>x.close), e20=ema(closes,20), e50=ema(closes,50), R=rsi(closes), A=atr(c);
+  let bs=(bullishStructure?2:0)+(bullBos?2:0)+(e20>e50?1:0)+(R>=50&&R<=70?1:0)+(paBull?1:0);
+  let ss=(bearishStructure?2:0)+(bearBos?2:0)+(e20<e50?1:0)+(R>=30&&R<=50?1:0)+(paBear?1:0);
+  let signal='NO_TRADE',bias='Neutral',event='None',pa='Weak',sl=null,tp=null,rr=null;
+  if(bs>=6&&bs>ss+1){signal='BUY';bias='Bullish';event=bullBos?'Bullish BOS':'Bullish structure';pa=paBull?'Bullish rejection/engulfing':'Confirmed';sl=close-A*1.5;tp=close+(close-sl)*2;rr=2}
+  else if(ss>=6&&ss>bs+1){signal='SELL';bias='Bearish';event=bearBos?'Bearish BOS':'Bearish structure';pa=paBear?'Bearish rejection/engulfing':'Confirmed';sl=close+A*1.5;tp=close-(sl-close)*2;rr=2}
+  $('signal').textContent=signal==='BUY'?'🟢 BUY':signal==='SELL'?'🔴 SELL':'🟡 NO TRADE';
+  $('price').textContent=fmt(close); $('time').textContent=new Date(last.time*1000).toLocaleString();
+  $('structure').textContent=bullishStructure?'HH / HL':bearishStructure?'LH / LL':'Neutral';
+  $('event').textContent=event;$('pa').textContent=pa;$('trend').textContent=e20>e50?'EMA bullish':e20<e50?'EMA bearish':'EMA mixed';
+  $('entry').textContent=fmt(signal==='NO_TRADE'?null:close);$('sl').textContent=fmt(sl);$('tp').textContent=fmt(tp);$('rr').textContent=rr?`1 : ${rr}`:'—';
+}
+async function fetchLive(){
+ try{
+  if(!key)throw Error('Enter API key');
+  // Twelve Data endpoint: time_series for EUR/USD 1-hour candles.
+  const url=`https://api.twelvedata.com/time_series?symbol=EUR/USD&interval=1h&outputsize=200&apikey=${encodeURIComponent(key)}`;
+  const r=await fetch(url); const d=await r.json();
+  if(d.status==='error'||!d.values)throw Error(d.message||'Data request failed');
+  const candles=d.values.slice().reverse().map(x=>({time:Math.floor(new Date(x.datetime).getTime()/1000),open:+x.open,high:+x.high,low:+x.low,close:+x.close}));
+  analyze(candles); setStatus('Live feed connected • updated '+new Date().toLocaleTimeString());
+ }catch(e){setStatus('Connection error: '+e.message)}
+}
+function startLive(){key=$('apiKey').value.trim();if(!key){setStatus('Enter your Twelve Data API key.');return}fetchLive();clearInterval(timer);timer=setInterval(fetchLive,60000)}
+function stopLive(){clearInterval(timer);timer=null;setStatus('Live feed stopped.')}
+</script></body></html>
