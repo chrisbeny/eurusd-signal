@@ -20,6 +20,8 @@ button{background:#2563eb;border:0;font-weight:700}.danger{background:#8b2635}.s
 <div class="box">Live price<div id="price" class="value">—</div></div>
 <div class="box">Last candle<div id="time" class="value">—</div></div>
 <div class="box">Structure<div id="structure" class="value">—</div></div>
+<div class="box">Swing sequence<div id="swings" class="value">—</div></div>
+<div class="box">BOS / CHoCH<div id="structureEvent" class="value">—</div></div>
 <div class="box">Event<div id="event" class="value">—</div></div>
 <div class="box">Price action<div id="pa" class="value">—</div></div>
 <div class="box">Trend<div id="trend" class="value">—</div></div>
@@ -55,30 +57,76 @@ function atr(c,p=14){let t=[];for(let i=1;i<c.length;i++)t.push(Math.max(c[i].hi
 function analyze(c){
   let n=c.length, highs=[],lows=[];
   for(let i=2;i<n-2;i++){
-    if(c[i].high>c[i-1].high&&c[i].high>c[i-2].high&&c[i].high>c[i+1].high&&c[i].high>c[i+2].high)highs.push(c[i].high);
-    if(c[i].low<c[i-1].low&&c[i].low<c[i-2].low&&c[i].low<c[i+1].low&&c[i].low<c[i+2].low)lows.push(c[i].low);
+    if(c[i].high>c[i-1].high&&c[i].high>c[i-2].high&&c[i].high>c[i+1].high&&c[i].high>c[i+2].high)
+      highs.push({price:c[i].high,index:i});
+    if(c[i].low<c[i-1].low&&c[i].low<c[i-2].low&&c[i].low<c[i+1].low&&c[i].low<c[i+2].low)
+      lows.push({price:c[i].low,index:i});
   }
+
   const close=c[n-1].close, prev=c[n-2], last=c[n-1];
-  let bullishStructure=highs.length>=2&&lows.length>=2&&highs.at(-1)>highs.at(-2)&&lows.at(-1)>lows.at(-2);
-  let bearishStructure=highs.length>=2&&lows.length>=2&&highs.at(-1)<highs.at(-2)&&lows.at(-1)<lows.at(-2);
-  let bullBos=highs.length&&close>highs.at(-1), bearBos=lows.length&&close<lows.at(-1);
-  let body=Math.abs(last.close-last.open), range=Math.max(last.high-last.low,1e-9);
+  const lastH=highs.at(-1), prevH=highs.at(-2), lastL=lows.at(-1), prevL=lows.at(-2);
+
+  const bullishStructure=!!(lastH&&prevH&&lastL&&prevL&&lastH.price>prevH.price&&lastL.price>prevL.price);
+  const bearishStructure=!!(lastH&&prevH&&lastL&&prevL&&lastH.price<prevH.price&&lastL.price<prevL.price);
+
+  const bullBos=!!(lastH&&close>lastH.price);
+  const bearBos=!!(lastL&&close<lastL.price);
+
+  let priorBull=false, priorBear=false;
+  if(highs.length>=3&&lows.length>=3){
+    const h1=highs.at(-2),h0=highs.at(-3),l1=lows.at(-2),l0=lows.at(-3);
+    priorBull=h1.price>h0.price&&l1.price>l0.price;
+    priorBear=h1.price<h0.price&&l1.price<l0.price;
+  }
+
+  const bullChoch=priorBear&&bullBos;
+  const bearChoch=priorBull&&bearBos;
+
+  let swingText='Neutral';
+  if(bullishStructure) swingText='HH / HL';
+  else if(bearishStructure) swingText='LH / LL';
+  else if(lastH&&prevH&&lastL&&prevL) swingText='Mixed / unclear';
+
+  let structureEvent='None';
+  if(bullChoch) structureEvent='Bullish CHoCH';
+  else if(bearChoch) structureEvent='Bearish CHoCH';
+  else if(bullBos) structureEvent='Bullish BOS';
+  else if(bearBos) structureEvent='Bearish BOS';
+
+  let body=Math.abs(last.close-last.open);
   let bullEngulf=last.close>last.open&&last.open<=prev.close&&last.close>=prev.open;
   let bearEngulf=last.close<last.open&&last.open>=prev.close&&last.close<=prev.open;
   let bullReject=(Math.min(last.open,last.close)-last.low)>body*1.5&&last.close>last.open;
   let bearReject=(last.high-Math.max(last.open,last.close))>body*1.5&&last.close<last.open;
   let paBull=bullEngulf||bullReject, paBear=bearEngulf||bearReject;
+
   let closes=c.map(x=>x.close), e20=ema(closes,20), e50=ema(closes,50), R=rsi(closes), A=atr(c);
   let bs=(bullishStructure?2:0)+(bullBos?2:0)+(e20>e50?1:0)+(R>=50&&R<=70?1:0)+(paBull?1:0);
   let ss=(bearishStructure?2:0)+(bearBos?2:0)+(e20<e50?1:0)+(R>=30&&R<=50?1:0)+(paBear?1:0);
-  let signal='NO_TRADE',bias='Neutral',event='None',pa='Weak',sl=null,tp=null,rr=null;
-  if(bs>=6&&bs>ss+1){signal='BUY';bias='Bullish';event=bullBos?'Bullish BOS':'Bullish structure';pa=paBull?'Bullish rejection/engulfing':'Confirmed';sl=close-A*1.5;tp=close+(close-sl)*2;rr=2}
-  else if(ss>=6&&ss>bs+1){signal='SELL';bias='Bearish';event=bearBos?'Bearish BOS':'Bearish structure';pa=paBear?'Bearish rejection/engulfing':'Confirmed';sl=close+A*1.5;tp=close-(sl-close)*2;rr=2}
+
+  let signal='NO_TRADE',pa='Weak',sl=null,tp=null,rr=null;
+  if(bs>=6&&bs>ss+1){
+    signal='BUY'; pa=paBull?'Bullish rejection/engulfing':'Confirmed';
+    sl=close-A*1.5; tp=close+(close-sl)*2; rr=2;
+  } else if(ss>=6&&ss>bs+1){
+    signal='SELL'; pa=paBear?'Bearish rejection/engulfing':'Confirmed';
+    sl=close+A*1.5; tp=close-(sl-close)*2; rr=2;
+  }
+
   $('signal').textContent=signal==='BUY'?'🟢 BUY':signal==='SELL'?'🔴 SELL':'🟡 NO TRADE';
-  $('price').textContent=fmt(close); $('time').textContent=new Date(last.time*1000).toLocaleString();
-  $('structure').textContent=bullishStructure?'HH / HL':bearishStructure?'LH / LL':'Neutral';
-  $('event').textContent=event;$('pa').textContent=pa;$('trend').textContent=e20>e50?'EMA bullish':e20<e50?'EMA bearish':'EMA mixed';
-  $('entry').textContent=fmt(signal==='NO_TRADE'?null:close);$('sl').textContent=fmt(sl);$('tp').textContent=fmt(tp);$('rr').textContent=rr?`1 : ${rr}`:'—';
+  $('price').textContent=fmt(close);
+  $('time').textContent=new Date(last.time*1000).toLocaleString();
+  $('structure').textContent=swingText;
+  $('swings').textContent=lastH&&prevH&&lastL&&prevL ?
+    `H: ${fmt(lastH.price)} / ${fmt(prevH.price)} • L: ${fmt(lastL.price)} / ${fmt(prevL.price)}` : 'Not enough swings';
+  $('structureEvent').textContent=structureEvent;
+  $('event').textContent=structureEvent;
+  $('pa').textContent=pa;
+  $('trend').textContent=e20>e50?'EMA bullish':e20<e50?'EMA bearish':'EMA mixed';
+  $('entry').textContent=fmt(signal==='NO_TRADE'?null:close);
+  $('sl').textContent=fmt(sl);
+  $('tp').textContent=fmt(tp);
+  $('rr').textContent=rr?`1 : ${rr}`:'—';
 }
 async function fetchLive(){
  try{
